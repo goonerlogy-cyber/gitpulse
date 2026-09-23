@@ -165,7 +165,7 @@ var extLang = map[string]string{
 }
 
 func loadLanguages(path string) (map[string]int64, error) {
-	cmd := exec.Command("git", "-C", path, "ls-files", "-z")
+	cmd := exec.Command("git", "-C", path, "ls-files", "--stage", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -173,8 +173,18 @@ func loadLanguages(path string) (map[string]int64, error) {
 
 	langs := map[string]int64{}
 	seen := make(map[string]bool)
-	for _, f := range strings.Split(string(out), "\x00") {
-		if f == "" {
+	for _, record := range strings.Split(string(out), "\x00") {
+		if record == "" {
+			continue
+		}
+		header, f, ok := strings.Cut(record, "\t")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 3 {
+			return nil, fmt.Errorf("invalid git ls-files record")
+		}
+		// Git can check out mode-120000 links as ordinary files when
+		// core.symlinks=false. The index, not the filesystem, identifies them.
+		if fields[0] != "100644" && fields[0] != "100755" {
 			continue
 		}
 		if seen[f] {

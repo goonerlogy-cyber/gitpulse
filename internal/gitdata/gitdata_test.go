@@ -138,6 +138,33 @@ func TestLoadRejectsNonRepository(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoresSymlinkCheckedOutAsRegularFile(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "config", "core.symlinks", "false")
+	cmd := exec.Command("git", "-C", dir, "hash-object", "-w", "--stdin")
+	cmd.Stdin = strings.NewReader("elsewhere.go")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "update-index", "--add", "--cacheinfo", "120000,"+strings.TrimSpace(string(out))+",linked.go")
+	git(t, dir, "checkout-index", "--", "linked.go")
+	info, err := os.Lstat(filepath.Join(dir, "linked.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatal("fixture must materialize a tracked symlink as a regular file")
+	}
+	data, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Languages) != 0 {
+		t.Fatalf("tracked symlink counted as source: %v", data.Languages)
+	}
+}
+
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("output unavailable") }
