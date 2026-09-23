@@ -53,7 +53,16 @@ func TestLoadFromSubdirectoryCountsExactTrackedNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Clean(data.RepoPath) != filepath.Clean(dir) {
+	gotRoot, err := os.Stat(data.RepoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Git can expand a Windows 8.3 path (RUNNER~1) to its long spelling.
+	if !os.SameFile(gotRoot, wantRoot) {
 		t.Fatalf("repository = %q; want %q", data.RepoPath, dir)
 	}
 	if got, want := data.Languages["Go"], int64(5*len(names)); got != want {
