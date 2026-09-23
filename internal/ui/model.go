@@ -101,6 +101,9 @@ func (m Model) View() string {
 
 func (m Model) viewOverview() string {
 	d := m.data
+	if len(d.Commits) == 0 {
+		return subtitleStyle.Render("No commits yet. Tracked files are available in the Languages tab.")
+	}
 	days := int(d.LastCommit.Sub(d.FirstCommit).Hours()/24) + 1
 	if days < 1 {
 		days = 1

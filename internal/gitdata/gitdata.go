@@ -34,25 +34,17 @@ type Data struct {
 const logSep = "\x1f"
 
 func Load(path string) (*Data, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := repoRoot(path)
 	if err != nil {
 		return nil, err
 	}
-	if !isGitRepo(abs) {
-		return nil, fmt.Errorf("%s is not a git repository", abs)
-	}
-
 	commits, err := loadCommits(abs)
 	if err != nil {
 		return nil, err
 	}
-	if len(commits) == 0 {
-		return nil, fmt.Errorf("no commits found in %s", abs)
-	}
-
 	langs, err := loadLanguages(abs)
 	if err != nil {
-		langs = map[string]int64{}
+		return nil, fmt.Errorf("load tracked files: %w", err)
 	}
 
 	d := &Data{
@@ -62,8 +54,10 @@ func Load(path string) (*Data, error) {
 		Contributors: map[string]int{},
 		DailyCounts:  map[string]int{},
 		Languages:    langs,
-		FirstCommit:  commits[len(commits)-1].Date,
-		LastCommit:   commits[0].Date,
+	}
+	if len(commits) > 0 {
+		d.FirstCommit = commits[len(commits)-1].Date
+		d.LastCommit = commits[0].Date
 	}
 
 	for _, c := range commits {
@@ -74,10 +68,13 @@ func Load(path string) (*Data, error) {
 	return d, nil
 }
 
-func isGitRepo(path string) bool {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--is-inside-work-tree")
+func repoRoot(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()
-	return err == nil && strings.TrimSpace(string(out)) == "true"
+	if err != nil {
+		return "", fmt.Errorf("%s is not a readable git working tree: %w", path, err)
+	}
+	return filepath.Clean(strings.TrimSuffix(string(out), "\n")), nil
 }
 
 func loadCommits(path string) ([]Commit, error) {
@@ -88,7 +85,7 @@ func loadCommits(path string) ([]Commit, error) {
 		return nil, fmt.Errorf("git log failed: %w", err)
 	}
 
-	var commits []Commit
+	commits := make([]Commit, 0)
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for scanner.Scan() {
@@ -111,6 +108,9 @@ func loadCommits(path string) ([]Commit, error) {
 			Date:    t,
 			Subject: parts[4],
 		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read git log: %w", err)
 	}
 	sort.Slice(commits, func(i, j int) bool { return commits[i].Date.After(commits[j].Date) })
 	return commits, nil
@@ -165,25 +165,29 @@ var extLang = map[string]string{
 }
 
 func loadLanguages(path string) (map[string]int64, error) {
-	cmd := exec.Command("git", "-C", path, "ls-files")
+	cmd := exec.Command("git", "-C", path, "ls-files", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
 	langs := map[string]int64{}
-	for _, f := range strings.Split(string(out), "\n") {
-		f = strings.TrimSpace(f)
+	seen := make(map[string]bool)
+	for _, f := range strings.Split(string(out), "\x00") {
 		if f == "" {
 			continue
 		}
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
 		ext := strings.ToLower(filepath.Ext(f))
 		lang, ok := extLang[ext]
 		if !ok {
 			continue
 		}
-		fi, err := os.Stat(filepath.Join(path, f))
-		if err != nil || fi.IsDir() {
+		fi, err := os.Lstat(filepath.Join(path, f))
+		if err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
 		langs[lang] += fi.Size()
